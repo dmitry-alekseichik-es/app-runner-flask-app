@@ -1,14 +1,31 @@
-Description: Magmascript pipeline
+Description: Pipelone for Building docker image and Pushing it to the AWS ECR
+
+Parameters:
+  ArtifactBucket:
+    Type: String
+    Description: Bucket for storing build stage artifacts
+  ConnectionArn:
+    Type: String
+    Description: Apn of connection
+  FullRepositoryId:
+    Type: String
+    Description: Repository owner and its name
+  BranchName:
+    Type: String
+    Description: Target branch for build
+  EcrRepositoryUrl:
+    Type: String
+    Description: ECR Repository url for pushing image
+
+
 Resources:
   CodePipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
       RoleArn: !GetAtt CodePipelineRole.Arn
-      ArtifactStores:
-        - Region: eu-central-1
-          ArtifactStore:
-            Type: S3
-            Location: "magmascript-artifacts"
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
       Stages:
         - Name: Source
           Actions:
@@ -19,9 +36,9 @@ Resources:
                 Provider: CodeStarSourceConnection
                 Version: '1'
               Configuration:
-                ConnectionArn: "arn:aws:codestar-connections:eu-central-1:402224493269:connection/cf4ef40c-6725-4706-bdbe-87ff3b1996e6"
-                FullRepositoryId: matteappen/magmascript-server
-                BranchName: develop
+                ConnectionArn: !Ref ConnectionArn
+                FullRepositoryId: !Ref FullRepositoryId
+                BranchName: !Ref BranchName
                 OutputArtifactFormat: CODE_ZIP
               OutputArtifacts:
                 - Name: SourceOutput
@@ -76,14 +93,16 @@ Resources:
                   - codestar-connections:TagResource
                   - codestar-connections:ListTagsForResource
                   - codestar-connections:UntagResource
-                Resource: 'arn:aws:codestar-connections:eu-central-1:402224493269:connection/cf4ef40c-6725-4706-bdbe-87ff3b1996e6'
+                Resource: !Ref ConnectionArn
         - PolicyName: CodeStarConnection
           PolicyDocument:
             Statement:
               - Effect: Allow
                 Action:
                   - s3:*
-                Resource: 'arn:aws:s3:::magmascript-artifacts/*'
+                Resource: !Sub
+                      - 'arn:aws:s3:::${ArtifactBucket}/*'
+                      - ArtifactBucket: !Ref ArtifactBucket
 
 
   CodeBuildProject:
@@ -101,8 +120,7 @@ Resources:
               commands:
                 - echo Logging in to Amazon ECR...
                 - aws --version
-                - REPOSITORY_URI=402224493269.dkr.ecr.eu-central-1.amazonaws.com/magmascript
-                - aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin $REPOSITORY_URI       
+                - aws ecr get-login-password | docker login --username AWS --password-stdin $REPOSITORY_URI       
                 - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
                 - IMAGE_TAG=${COMMIT_HASH:=latest}
             build:
@@ -126,9 +144,9 @@ Resources:
         PrivilegedMode: true
         EnvironmentVariables:
           - Name: AWS_DEFAULT_REGION
-            Value: us-west-2
+            Value: !Ref "AWS::Region"
           - Name: REPOSITORY_URI
-            Value: 402224493269.dkr.ecr.eu-central-1.amazonaws.com/magmascript
+            Value: !Ref EcrRepositoryUrl
   CodeBuildRole:
     Type: AWS::IAM::Role
     Properties:
