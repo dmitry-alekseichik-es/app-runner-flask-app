@@ -1,4 +1,5 @@
 from flask import Flask, jsonify
+import torch
 
 app = Flask(__name__)
 

@@ -1,0 +1,164 @@
+Description: Magmascript pipeline
+Resources:
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStores:
+        - Region: eu-central-1
+          ArtifactStore:
+            Type: S3
+            Location: "magmascript-artifacts"
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              Configuration:
+                ConnectionArn: "arn:aws:codestar-connections:eu-central-1:402224493269:connection/cf4ef40c-6725-4706-bdbe-87ff3b1996e6"
+                FullRepositoryId: matteappen/magmascript-server
+                BranchName: develop
+                OutputArtifactFormat: CODE_ZIP
+              OutputArtifacts:
+                - Name: SourceOutput
+        - Name: Build
+          Actions:
+            - Name: Build
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              InputArtifacts:
+                - Name: SourceOutput
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              RunOrder: 1
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CodePipelinePolicy
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                  - codecommit:GetBranch
+                  - codecommit:GetCommit
+                  - codecommit:UploadArchive
+                  - codecommit:GetUploadArchiveStatus
+                  - codecommit:CancelUploadArchive
+                Resource: '*'
+        - PolicyName: S3Artifacts
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codestar-connections:CreateConnection
+                  - codestar-connections:DeleteConnection
+                  - codestar-connections:UseConnection
+                  - codestar-connections:GetConnection
+                  - codestar-connections:ListConnections
+                  - codestar-connections:TagResource
+                  - codestar-connections:ListTagsForResource
+                  - codestar-connections:UntagResource
+                Resource: 'arn:aws:codestar-connections:eu-central-1:402224493269:connection/cf4ef40c-6725-4706-bdbe-87ff3b1996e6'
+        - PolicyName: CodeStarConnection
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:*
+                Resource: 'arn:aws:s3:::magmascript-artifacts/*'
+
+
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: MyCodeBuildProject
+      Description: My CodeBuild Project for building Docker images
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo Logging in to Amazon ECR...
+                - aws --version
+                - REPOSITORY_URI=402224493269.dkr.ecr.eu-central-1.amazonaws.com/magmascript
+                - aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin $REPOSITORY_URI       
+                - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+                - IMAGE_TAG=${COMMIT_HASH:=latest}
+            build:
+              commands:
+                - echo Build started on `date`
+                - echo Building the Docker image...
+                - docker build -t $REPOSITORY_URI:latest .
+                - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$IMAGE_TAG
+            post_build:
+              commands:
+                - echo Build completed on `date`
+                - echo Pushing the Docker image...
+                - docker push $REPOSITORY_URI:latest
+                - docker push $REPOSITORY_URI:$IMAGE_TAG
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:4.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: AWS_DEFAULT_REGION
+            Value: us-west-2
+          - Name: REPOSITORY_URI
+            Value: 402224493269.dkr.ecr.eu-central-1.amazonaws.com/magmascript
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - codebuild.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: CodeBuildPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: '*'
+            Resource: '*'
+
+Outputs:
+  CodePipeline:
+    Description: The CodePipeline
+    Value: !Ref CodePipeline
+  CodeBuildProject:
+    Description: The CodeBuild project
+    Value: !Ref CodeBuildProject
+  CodePipelineRole:
+    Description: The IAM role assumed by CodePipeline
+    Value: !GetAtt CodePipelineRole.Arn
+  CodeBuildRole:
+    Description: The IAM role assumed by CodeBuild
+    Value: !GetAtt CodeBuildRole.Arn
